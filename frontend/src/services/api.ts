@@ -105,6 +105,9 @@ export const apiService = {
       
       // Debug: Log the FormData contents
       console.log('FormData contents:');
+      console.log('File name:', file.name);
+      console.log('File size:', file.size);
+      console.log('File type:', file.type);
       for (let [key, value] of formData.entries()) {
         console.log(`${key}:`, value);
       }
@@ -113,7 +116,7 @@ export const apiService = {
         headers: {
           // Ensure no Content-Type is set for FormData
         },
-        timeout: 30000, // 30 second timeout for OCR processing
+        timeout: 120000, // 2 minutes timeout for mobile uploads
       });
       return response.data;
     },

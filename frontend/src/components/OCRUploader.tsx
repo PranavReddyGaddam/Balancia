@@ -19,6 +19,15 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
       return;
     }
 
+    // Check file size (10MB limit for mobile)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      setError('File size too large. Please select an image smaller than 10MB.');
+      return;
+    }
+
+    console.log('Processing file:', file.name, 'Size:', file.size, 'Type:', file.type);
+
     setIsLoading(true);
     setError(null);
 
@@ -41,7 +50,8 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
       
       onNext();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to process image');
+      console.error('Upload error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to process image. Please try again.');
     } finally {
       setIsLoading(false);
       // Clean up preview URL after processing is complete
@@ -80,6 +90,21 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
 
   const openFileDialog = () => {
     fileInputRef.current?.click();
+  };
+
+  const openCamera = () => {
+    // Create a new file input for camera
+    const cameraInput = document.createElement('input');
+    cameraInput.type = 'file';
+    cameraInput.accept = 'image/*';
+    cameraInput.capture = 'environment'; // Use back camera
+    cameraInput.onchange = (e) => {
+      const target = e.target as HTMLInputElement;
+      if (target.files && target.files[0]) {
+        handleFile(target.files[0]);
+      }
+    };
+    cameraInput.click();
   };
 
   return (
@@ -167,6 +192,7 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
         
         <button
           type="button"
+          onClick={openCamera}
           disabled={isLoading}
           className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
         >
