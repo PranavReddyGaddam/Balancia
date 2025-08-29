@@ -19,10 +19,10 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
       return;
     }
 
-    // Check file size (10MB limit for mobile)
-    const maxSize = 10 * 1024 * 1024; // 10MB
+    // Check file size (25MB limit for mobile)
+    const maxSize = 25 * 1024 * 1024; // 25MB
     if (file.size > maxSize) {
-      setError('File size too large. Please select an image smaller than 10MB.');
+      setError('File size too large. Please select an image smaller than 25MB.');
       return;
     }
 
