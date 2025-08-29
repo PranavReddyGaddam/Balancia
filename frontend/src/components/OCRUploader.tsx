@@ -36,8 +36,28 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
 
+      let processedFile = file;
+      
+      // Convert unsupported formats to JPEG
+      const unsupportedFormats = [
+        'image/heic',
+        'image/heif', 
+        'image/webp',
+        'image/avif',
+        'image/tiff',
+        'image/bmp'
+      ];
+      
+      const isUnsupportedFormat = unsupportedFormats.includes(file.type) || 
+        file.name.toLowerCase().match(/\.(heic|heif|webp|avif|tiff|tif|bmp)$/);
+      
+      if (isUnsupportedFormat) {
+        console.log(`Converting ${file.type} to JPEG...`);
+        processedFile = await convertToJpeg(file);
+      }
+
       // Process with OCR
-      const result = await apiService.ocr.extract(file);
+      const result = await apiService.ocr.extract(processedFile);
       
       // Update store with extracted items
       setItems(result.items.map(item => ({
@@ -60,6 +80,36 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
         setPreviewUrl(null);
       }
     }
+  };
+
+  // Function to convert any image format to JPEG
+  const convertToJpeg = async (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx?.drawImage(img, 0, 0);
+        
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const jpegFile = new File([blob], file.name.replace(/\.(heic|heif|webp|avif|tiff|tif|bmp)$/i, '.jpg'), {
+              type: 'image/jpeg',
+              lastModified: Date.now(),
+            });
+            resolve(jpegFile);
+          } else {
+            reject(new Error('Failed to convert image to JPEG'));
+          }
+        }, 'image/jpeg', 0.9);
+      };
+      
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = URL.createObjectURL(file);
+    });
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -162,7 +212,7 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
                 </button>
               </p>
               <p className="text-sm text-gray-500">
-                Supports JPG, PNG, and WebP formats
+                Supports JPG, PNG, WebP, HEIC, HEIF, AVIF, TIFF, and BMP formats
               </p>
             </div>
           </div>
