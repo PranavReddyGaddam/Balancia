@@ -12,7 +12,7 @@ export default function PeopleManager({ onNext, onBack }: PeopleManagerProps) {
   const [newPersonName, setNewPersonName] = useState('');
 
   // Removed predefined quick-add names; reserved for future group presets
-  const defaultNames: string[] = [];
+  
 
   const handleAddPerson = () => {
     if (newPersonName.trim()) {
@@ -27,12 +27,7 @@ export default function PeopleManager({ onNext, onBack }: PeopleManagerProps) {
     }
   };
 
-  // Removed quick-add handlers
-  const handleAddDefaultName = (_name: string) => {};
 
-  const handleAddEveryone = () => {};
-
-  const isEveryoneAdded = true;
 
   return (
     <div className="space-y-6">
