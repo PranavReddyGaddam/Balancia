@@ -1,0 +1,1 @@
+# Smart Split Backend Application
