@@ -1,34 +1,12 @@
-import pytesseract
-from PIL import Image
 import io
 import re
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from typing import Dict, List, Any
 from app.core.config import settings
-try:
-    from app.services.llm_service import LLMService  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    LLMService = None  # type: ignore
 
 class OCRService:
     def __init__(self):
-        # Configure tesseract path if needed
-        if hasattr(settings, 'TESSERACT_CMD'):
-            pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
-        
-        # Initialize LLM service (optional)
-        self.llm_service = None
-        try:
-            if LLMService:
-                self.llm_service = LLMService()
-                print("✅ LLM service initialized successfully")
-            else:
-                raise RuntimeError("LLMService module not available")
-        except Exception as e:
-            print(f"⚠️ LLM service not available: {str(e)}")
-            print("📝 OCR will use regex fallback for text parsing")
-        
         # Initialize Amazon Textract client
         self.textract_client = None
         try:
@@ -47,41 +25,44 @@ class OCRService:
                 )
                 print("✅ Amazon Textract client initialized")
             else:
-                print("⚠️ AWS credentials not configured - will use fallback OCR")
+                print("⚠️ AWS credentials not configured")
         except Exception as e:
             print(f"⚠️ Failed to initialize Textract client: {str(e)}")
-        
-        print("📝 OCR fallback: Local Tesseract or mock response")
     
     async def extract_text(self, file) -> Dict[str, Any]:
         """
-        Extract text from an uploaded image file using Amazon Textract with fallbacks
+        Extract text from an uploaded image file using Amazon Textract
         """
         try:
-            # Read the uploaded file
-            image_data = await file.read()
-            image = Image.open(io.BytesIO(image_data))
+            # Read the uploaded file properly
+            print(f"🔍 Processing file: {file.filename}, type: {file.content_type}")
             
-            # Try Amazon Textract first
+            # Read file content
+            image_data = await file.read()
+            print(f"🔍 File size: {len(image_data)} bytes")
+            
+            # Validate that we have data
+            if not image_data:
+                raise Exception("No image data received")
+            
+            # Skip PIL validation - let AWS Textract handle the image format
+            print("🔍 Sending raw image data to AWS Textract")
+            
+            # Extract text using Amazon Textract
             text = await self._extract_text_with_textract(image_data)
             if text:
                 print("✅ Text extracted using Amazon Textract")
+                print(f"🔍 Extracted text length: {len(text)} characters")
             else:
-                # Try local Tesseract as fallback
-                try:
-                    text = pytesseract.image_to_string(image)
-                    print("✅ Text extracted using local Tesseract")
-                except Exception as ocr_error:
-                    # If all OCR methods fail, provide a mock response
-                    print(f"⚠️ All OCR methods failed: {str(ocr_error)}")
-                    print("📝 Using mock OCR response for testing")
-                    text = "Mock receipt text for testing\nPizza $15.99\nCoke $2.50"
+                print("⚠️ No text extracted from image")
+                text = ""
             
-            # Parse the text to find items using LLM with fallback
-            items = await self._parse_receipt_text_with_llm(text)
+            # Parse the text to find items using regex
+            items = self._parse_receipt_text_fallback(text)
+            print(f"🔍 Parsed {len(items)} items from text")
             
             # Calculate confidence (simplified)
-            confidence = 0.85  # This would be more sophisticated in production
+            confidence = 0.85 if text else 0.0
             
             return {
                 'text': text,
@@ -90,25 +71,12 @@ class OCRService:
             }
         
         except Exception as e:
+            print(f"❌ OCR processing error: {str(e)}")
             raise Exception(f"OCR processing failed: {str(e)}")
 
-    async def _parse_receipt_text_with_llm(self, text: str) -> List[Dict[str, Any]]:
-        """
-        Parse receipt text using LLM with fallback to regex
-        """
-        # Try LLM service first
-        if self.llm_service and text.strip():
-            try:
-                return await self.llm_service.parse_receipt_text(text)
-            except Exception as e:
-                print(f"LLM parsing failed, falling back to regex: {str(e)}")
-        
-        # Fallback to regex patterns
-        return self._parse_receipt_text_fallback(text)
-    
     def _parse_receipt_text_fallback(self, text: str) -> List[Dict[str, Any]]:
         """
-        Fallback method using regex patterns to extract bill items
+        Parse receipt text using regex patterns to extract bill items
         """
         lines = text.split('\n')
         items = []
@@ -178,13 +146,18 @@ class OCRService:
         Extract text using Amazon Textract
         """
         if not self.textract_client:
+            print("❌ Textract client not initialized")
             return ""
         
         try:
+            print(f"🔍 Sending {len(image_data)} bytes to AWS Textract")
+            
             # Call Amazon Textract
             response = self.textract_client.detect_document_text(
                 Document={'Bytes': image_data}
             )
+            
+            print(f"🔍 Textract response received: {len(response.get('Blocks', []))} blocks")
             
             # Extract text from response
             text_blocks = []
@@ -192,33 +165,33 @@ class OCRService:
                 if block['BlockType'] == 'LINE':
                     text_blocks.append(block['Text'])
             
-            return '\n'.join(text_blocks)
+            extracted_text = '\n'.join(text_blocks)
+            print(f"🔍 Extracted {len(text_blocks)} text lines")
+            
+            return extracted_text
             
         except ClientError as e:
             error_code = e.response['Error']['Code']
+            error_message = e.response['Error']['Message']
+            print(f"❌ AWS Textract ClientError: {error_code} - {error_message}")
+            
             if error_code == 'InvalidParameterException':
-                print(f"⚠️ Textract error: Invalid image format")
+                return ""
             elif error_code == 'AccessDeniedException':
-                print(f"⚠️ Textract error: Access denied - check AWS credentials")
+                print("❌ AWS credentials or permissions issue")
+                return ""
             else:
-                print(f"⚠️ Textract error: {error_code}")
-            return ""
+                print(f"❌ AWS Textract error: {error_code}")
+                return ""
         except NoCredentialsError:
-            print("⚠️ AWS credentials not found")
+            print("❌ AWS credentials not found")
             return ""
         except Exception as e:
-            print(f"⚠️ Textract error: {str(e)}")
+            print(f"❌ Unexpected Textract error: {str(e)}")
             return ""
     
     async def is_available(self) -> bool:
         """
         Check if OCR service is available
         """
-        try:
-            # Create a simple test image
-            test_image = Image.new('RGB', (100, 100), color='white')
-            pytesseract.image_to_string(test_image)
-            return True
-        except Exception as e:
-            print(f"⚠️ OCR service not available: {str(e)}")
-            return False
+        return self.textract_client is not None

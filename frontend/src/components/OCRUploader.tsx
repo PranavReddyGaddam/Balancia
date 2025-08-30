@@ -57,6 +57,13 @@ export default function OCRUploader({ onNext }: OCRUploaderProps) {
       }
 
       // Process with OCR
+      console.log('Sending file to OCR:', {
+        name: processedFile.name,
+        size: processedFile.size,
+        type: processedFile.type,
+        lastModified: processedFile.lastModified
+      });
+      
       const result = await apiService.ocr.extract(processedFile);
       
       // Update store with extracted items
