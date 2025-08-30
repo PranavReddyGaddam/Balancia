@@ -101,7 +101,17 @@ class OCRService:
             
             # Parse JSON response
             try:
-                items = json.loads(response_text)
+                # Clean the response text - remove markdown code blocks if present
+                cleaned_text = response_text.strip()
+                if cleaned_text.startswith('```json'):
+                    cleaned_text = cleaned_text[7:]  # Remove ```json
+                if cleaned_text.startswith('```'):
+                    cleaned_text = cleaned_text[3:]  # Remove ```
+                if cleaned_text.endswith('```'):
+                    cleaned_text = cleaned_text[:-3]  # Remove ```
+                cleaned_text = cleaned_text.strip()
+                
+                items = json.loads(cleaned_text)
                 print(f"✅ Successfully parsed {len(items)} items from vision model")
                 
                 return {
