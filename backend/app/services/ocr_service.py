@@ -1,37 +1,28 @@
 import io
 import re
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
+import json
+import base64
+from openai import OpenAI
 from typing import Dict, List, Any
 from app.core.config import settings
 
 class OCRService:
     def __init__(self):
-        # Initialize Amazon Textract client
-        self.textract_client = None
+        # Initialize OpenAI client
+        self.openai_client = None
         try:
-            # Debug: Check if AWS credentials are loaded
-            aws_key = settings.AWS_ACCESS_KEY_ID
-            aws_secret = settings.AWS_SECRET_ACCESS_KEY
-            print(f"🔍 AWS Key loaded: {'Yes' if aws_key and aws_key.strip() else 'No'}")
-            print(f"🔍 AWS Secret loaded: {'Yes' if aws_secret and aws_secret.strip() else 'No'}")
-            
-            if aws_key and aws_key.strip():
-                self.textract_client = boto3.client(
-                    'textract',
-                    aws_access_key_id=aws_key,
-                    aws_secret_access_key=aws_secret,
-                    region_name=settings.AWS_REGION
-                )
-                print("✅ Amazon Textract client initialized")
+            api_key = settings.OPENAI_API_KEY
+            if api_key and api_key != "OPENAI_API_KEY":
+                self.openai_client = OpenAI(api_key=api_key)
+                print("✅ OpenAI client initialized successfully")
             else:
-                print("⚠️ AWS credentials not configured")
+                print("⚠️ OpenAI API key not configured")
         except Exception as e:
-            print(f"⚠️ Failed to initialize Textract client: {str(e)}")
+            print(f"⚠️ Failed to initialize OpenAI client: {str(e)}")
     
     async def extract_text(self, file) -> Dict[str, Any]:
         """
-        Extract text from an uploaded image file using Amazon Textract
+        Extract text and items from an uploaded image file using GPT-4 Vision
         """
         try:
             # Read the uploaded file properly
@@ -45,38 +36,103 @@ class OCRService:
             if not image_data:
                 raise Exception("No image data received")
             
-            # Skip PIL validation - let AWS Textract handle the image format
-            print("🔍 Sending raw image data to AWS Textract")
+            # Extract text and items using GPT-4 Vision
+            result = await self._extract_with_vision_model(image_data)
             
-            # Extract text using Amazon Textract
-            text = await self._extract_text_with_textract(image_data)
-            if text:
-                print("✅ Text extracted using Amazon Textract")
-                print(f"🔍 Extracted text length: {len(text)} characters")
-            else:
-                print("⚠️ No text extracted from image")
-                text = ""
-            
-            # Parse the text to find items using regex
-            items = self._parse_receipt_text_fallback(text)
-            print(f"🔍 Parsed {len(items)} items from text")
-            
-            # Calculate confidence (simplified)
-            confidence = 0.85 if text else 0.0
-            
-            return {
-                'text': text,
-                'confidence': confidence,
-                'items': items
-            }
+            return result
         
         except Exception as e:
-            print(f"❌ OCR processing error: {str(e)}")
-            raise Exception(f"OCR processing failed: {str(e)}")
+            print(f"❌ Vision model processing error: {str(e)}")
+            raise Exception(f"Vision model processing failed: {str(e)}")
 
+    async def _extract_with_vision_model(self, image_data: bytes) -> Dict[str, Any]:
+        """
+        Extract text and items using GPT-4 Vision
+        """
+        if not self.openai_client:
+            print("❌ OpenAI client not initialized")
+            return {
+                'text': '',
+                'confidence': 0.0,
+                'items': []
+            }
+        
+        try:
+            # Encode image to base64
+            base64_image = base64.b64encode(image_data).decode("utf-8")
+            print(f"🔍 Image encoded to base64: {len(base64_image)} characters")
+            
+            # Call GPT-4 Vision
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4-vision-preview",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": """Extract all items from this receipt. For each item, provide: name, quantity, and price. 
+                                Return the result as a JSON array with this exact structure: 
+                                [{"name": "item name", "quantity": 1, "price": 10.99, "is_taxable": true}]
+                                
+                                Rules:
+                                - Only return the JSON array, no other text
+                                - Use exact item names from the receipt
+                                - Set quantity to 1 if not specified
+                                - Extract price as a number (no currency symbols)
+                                - Set is_taxable to true for all items
+                                - Skip non-item lines like totals, taxes, etc."""
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=1000
+            )
+            
+            # Extract the response
+            response_text = response.choices[0].message.content
+            print(f"🔍 Vision model response: {len(response_text)} characters")
+            
+            # Parse JSON response
+            try:
+                items = json.loads(response_text)
+                print(f"✅ Successfully parsed {len(items)} items from vision model")
+                
+                return {
+                    'text': 'Receipt processed by GPT-4 Vision',
+                    'confidence': 0.95,
+                    'items': items
+                }
+                
+            except json.JSONDecodeError as json_error:
+                print(f"⚠️ JSON parsing error: {json_error}")
+                print(f"🔍 Raw response: {response_text}")
+                
+                # Fallback to regex parsing if JSON fails
+                items = self._parse_receipt_text_fallback(response_text)
+                return {
+                    'text': response_text,
+                    'confidence': 0.7,
+                    'items': items
+                }
+            
+        except Exception as e:
+            print(f"❌ Vision model error: {str(e)}")
+            return {
+                'text': '',
+                'confidence': 0.0,
+                'items': []
+            }
+    
     def _parse_receipt_text_fallback(self, text: str) -> List[Dict[str, Any]]:
         """
-        Parse receipt text using regex patterns to extract bill items
+        Fallback method using regex patterns to extract bill items
         """
         lines = text.split('\n')
         items = []
@@ -141,57 +197,8 @@ class OCRService:
         
         return list(item_dict.values())
     
-    async def _extract_text_with_textract(self, image_data: bytes) -> str:
-        """
-        Extract text using Amazon Textract
-        """
-        if not self.textract_client:
-            print("❌ Textract client not initialized")
-            return ""
-        
-        try:
-            print(f"🔍 Sending {len(image_data)} bytes to AWS Textract")
-            
-            # Call Amazon Textract
-            response = self.textract_client.detect_document_text(
-                Document={'Bytes': image_data}
-            )
-            
-            print(f"🔍 Textract response received: {len(response.get('Blocks', []))} blocks")
-            
-            # Extract text from response
-            text_blocks = []
-            for block in response['Blocks']:
-                if block['BlockType'] == 'LINE':
-                    text_blocks.append(block['Text'])
-            
-            extracted_text = '\n'.join(text_blocks)
-            print(f"🔍 Extracted {len(text_blocks)} text lines")
-            
-            return extracted_text
-            
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            error_message = e.response['Error']['Message']
-            print(f"❌ AWS Textract ClientError: {error_code} - {error_message}")
-            
-            if error_code == 'InvalidParameterException':
-                return ""
-            elif error_code == 'AccessDeniedException':
-                print("❌ AWS credentials or permissions issue")
-                return ""
-            else:
-                print(f"❌ AWS Textract error: {error_code}")
-                return ""
-        except NoCredentialsError:
-            print("❌ AWS credentials not found")
-            return ""
-        except Exception as e:
-            print(f"❌ Unexpected Textract error: {str(e)}")
-            return ""
-    
     async def is_available(self) -> bool:
         """
-        Check if OCR service is available
+        Check if vision model service is available
         """
-        return self.textract_client is not None
+        return self.openai_client is not None
