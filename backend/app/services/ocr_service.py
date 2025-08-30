@@ -64,7 +64,7 @@ class OCRService:
             
             # Call GPT-4 Vision
             response = self.openai_client.chat.completions.create(
-                model="gpt-4-vision-preview",
+                model="gpt-5",
                 messages=[
                     {
                         "role": "user",
